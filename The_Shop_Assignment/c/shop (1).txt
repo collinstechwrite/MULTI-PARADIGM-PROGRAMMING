@@ -1,0 +1,505 @@
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <dirent.h>
+#include <errno.h>
+#include <ctype.h>
+
+#define MAX_FILE_NAME_LENGTH 260
+#define MAX_INPUT_FILES 20
+#define MAX_PRODUCTS_IN_STOCK 20
+//Global variables
+char *DIRECTORY_PATH="../";
+
+//Structures
+struct Product {
+	char* name;
+	double price;
+};
+struct ProductStock {
+	struct Product product;
+	int quantity;
+};
+struct Shop {
+	double cash;
+	struct ProductStock stock[MAX_PRODUCTS_IN_STOCK];
+	int index;
+};
+struct Customer {
+	char* name;
+	double budget;
+	struct ProductStock shoppingList[10];
+	int index;
+};
+
+struct temp_data {
+	char* product_name;
+	int available_qty;
+	int required_qty;
+};
+struct temp_buying_data {
+	char* product_name;
+	int qty;
+	double sub_total;
+};
+struct temp_out_of_stock {
+	struct temp_data products[MAX_PRODUCTS_IN_STOCK];
+	int index;
+};
+struct temp_active_products {
+	struct temp_buying_data products[MAX_PRODUCTS_IN_STOCK];
+	int index;
+};
+	
+//Functions' Declarations
+void printProduct(struct Product);
+void printCustomer(struct Customer, struct Shop *);
+struct Shop createAndStockShop();
+void printShop(struct Shop);
+double findProductPrice(char *, struct Shop *);
+int findProductQuantity(char *, struct Shop *);
+unsigned int findProduct(char *, struct Shop *);
+struct Customer readCustomer(char [],struct Shop *);
+static int getAllFiles(char *[]);
+
+//Functions' Definitions
+void printProduct(struct Product p)
+{
+	printf("PRODUCT NAME: %s \nPRODUCT PRICE: %.2f\n", p.name, p.price);
+	//printf("-------------\n");
+}
+
+void printCustomer(struct Customer c, struct Shop *s)
+{
+	printf("CUSTOMER NAME: %s \nCUSTOMER BUDGET: %.2f\n\n", c.name, c.budget);
+	double total = 0.0;
+	double cost = 0.0;
+	struct temp_out_of_stock out_of_stock={.index=0};
+	struct temp_active_products active_products_list={.index=0};
+
+	for(unsigned int i = 0; i < c.index; i++)
+	{
+		//check whether the product exisits in stock or not
+		unsigned int check_val = findProduct(c.shoppingList[i].product.name,s);
+		if (check_val == 0)
+		{
+            //printf("\n");
+            printf("Error no %s in Shop stock. List item ignored\n",c.shoppingList[i].product.name);
+		}
+        else
+		{
+			printProduct(c.shoppingList[i].product);
+			printf("\n%s ORDERS %d OF ABOVE PRODUCT\n", c.name, c.shoppingList[i].quantity);
+			if (findProductQuantity(c.shoppingList[i].product.name,s) < c.shoppingList[i].quantity)
+			{
+				struct temp_data data = {.product_name=c.shoppingList[i].product.name,
+										.available_qty=findProductQuantity(c.shoppingList[i].product.name,s),
+										.required_qty=c.shoppingList[i].quantity};
+				out_of_stock.products[out_of_stock.index] = data;
+				out_of_stock.index = (out_of_stock.index)+1;
+			}
+			cost = c.shoppingList[i].quantity * c.shoppingList[i].product.price;
+			struct temp_buying_data buying_data = {.product_name=c.shoppingList[i].product.name,
+													.qty=c.shoppingList[i].quantity,
+													.sub_total=cost};
+			active_products_list.products[active_products_list.index] = buying_data;
+			active_products_list.index = (active_products_list.index)+1;
+			total+=cost;
+			printf("The cost to %s will be $%.2f\n\n", c.name, cost);
+		}
+	}
+	printf("--------------------------------------------------\n");
+    printf("The total cost to %s will be $%.2f\n", c.name, total);
+	if (out_of_stock.index == 0)
+	{
+		if (c.budget >= total)
+		{
+            printf("--------------------------------------------------\n");
+            printf("SUCCESS !\n");
+            printf("%s's budget is %.2f\n",c.name,c.budget);
+            printf("%s has enough money\n",c.name);
+            printf("total of %.2f will be deducted from %s's budget\n",total,c.name);
+            //updating the stock
+			for(unsigned int k = 0; k < s->index; k++)
+			{
+				for(unsigned int m = 0; m < active_products_list.index; m++)
+					if (strcmp(s->stock[k].product.name, active_products_list.products[m].product_name)==0)
+						s->stock[k].quantity = (s->stock[k].quantity - active_products_list.products[m].qty);
+			}
+                        
+            c.budget = c.budget - total;
+            s->cash = s->cash + total;
+            printf("%s's budget is %.2f\n",c.name,c.budget);
+            printf("total of %.2f added to shop\n",total);
+            printf("Shop has %.2f\n",s->cash);
+		}
+		else
+		{
+			printf("--------------------------------------------------\n");
+            printf("FAIL !\n");
+            printf("%s's budget is %.2f\n",c.name,c.budget);
+            printf("The total cost of all items is ...! %.2f\n",total);
+            printf("%s does not have enough money\n",c.name);
+            printf("total of 0 will be deducted from %s's budget\n",c.name);
+            printf("John's budget is %.2f\n",c.budget);
+            printf("total of 0 added to shop\n");
+            printf("Shop has %.2f in cash\n",s->cash);
+		}
+	}
+	else
+	{
+		for(unsigned int j = 0; j < out_of_stock.index; j++)
+		{
+			printf("Not enough %s in stock\n",out_of_stock.products[j].product_name);
+			printf("%d %s in stock\n",out_of_stock.products[j].available_qty,out_of_stock.products[j].product_name);
+			printf("%s want %d %s\n",c.name,out_of_stock.products[j].required_qty,out_of_stock.products[j].product_name);
+			printf("Please revise order and upload again!\n");
+		}
+	}	
+}
+
+struct Shop createAndStockShop()
+{
+    FILE * fp;
+    char * line = NULL;
+    size_t len = 0;
+    size_t read;
+
+    fp = fopen("../stock.csv", "r");
+    if (fp == NULL)
+        exit(EXIT_FAILURE);
+
+	read = getline(&line, &len, fp);
+	float cash = atof(line);
+	// printf("cash in shop is %.2f\n", cash);
+	
+	struct Shop shop = { cash };
+
+    while ((read = getline(&line, &len, fp)) != -1) {
+        // printf("Retrieved line of length %zu:\n", read);
+        // printf("%s IS A LINE", line);
+		char *n = strtok(line, ",");
+		char *p = strtok(NULL, ",");
+		char *q = strtok(NULL, ",");
+		int quantity = atoi(q);
+		double price = atof(p);
+		char *name = malloc(sizeof(char) * 50);
+		strcpy(name, n);
+		struct Product product = { name, price };
+		struct ProductStock stockItem = { product, quantity };
+		shop.stock[shop.index++] = stockItem;
+		// printf("NAME OF PRODUCT %s PRICE %.2f QUANTITY %d\n", name, price, quantity);
+    }
+	
+	return shop;
+}
+
+void printShop(struct Shop s)
+{
+	printf("Shop has %.2f in cash\n", s.cash);
+	printf("The Shop has the following stock which will be checked against your order\n\n");
+	for (int i = 0; i < s.index; i++)
+	{
+		printProduct(s.stock[i].product);
+		printf("The shop has %d of the above\n\n", s.stock[i].quantity);
+	}
+}
+
+double findProductPrice(char *product_name, struct Shop *s)
+{
+	double product_price = 0.0;
+	for (int i = 0; i < s->index; i++)
+	{
+		if (strcmp(product_name,s->stock[i].product.name) == 0)
+		{
+			product_price = s->stock[i].product.price;
+			break;
+		}
+	}
+	return product_price;
+}
+
+int findProductQuantity(char *product_name, struct Shop *s)
+{
+	unsigned int product_qty = 0.0;
+	for (int i = 0; i < s->index; i++)
+	{
+		if (strcmp(product_name,s->stock[i].product.name) == 0)
+		{
+			product_qty = s->stock[i].quantity;
+			break;
+		}
+	}
+	return product_qty;
+}
+
+unsigned int findProduct(char *product_name, struct Shop *s)
+{
+	
+	for (int i = 0; i < s->index; i++)
+	{
+		if (strcmp(product_name,s->stock[i].product.name) == 0)
+			return 1;
+	}
+	return 0;
+}
+
+struct Customer readCustomer(char file_name[MAX_FILE_NAME_LENGTH],struct Shop *s)
+{
+	FILE * fp;
+    char * line = NULL;
+    size_t len = 0;
+    size_t read;
+
+    fp = fopen(file_name, "r");
+    if (fp == NULL)
+        exit(EXIT_FAILURE);
+	
+	read = getline(&line, &len, fp);
+	char *n = strtok(line, ",");
+	char *b = strtok(NULL, ",");
+	char *customer_name = malloc(sizeof(char) * 50);
+	strcpy(customer_name, n);
+	double customer_budget = atof(b);
+	
+	struct Customer c = {.name = customer_name, .budget = customer_budget};
+
+    while ((read = getline(&line, &len, fp)) != -1)
+	{
+		char *n = strtok(line, ",");
+		char *q = strtok(NULL, ",");
+		int quantity = atoi(q);
+		char *name = malloc(sizeof(char) * 50);
+		strcpy(name, n);
+		double price = findProductPrice(name,s);
+		struct Product product = { name, price };
+		struct ProductStock product_stock = { product, quantity };
+		c.shoppingList[c.index++] = product_stock;
+    }
+	
+	return c;
+}
+
+static int getAllFiles(char *(file_names)[MAX_FILE_NAME_LENGTH])
+{
+	DIR *dir;
+    struct dirent *de;
+    dir = opendir(DIRECTORY_PATH); //open directory
+	if (dir == NULL)	//direcotry couldn't open
+        exit(EXIT_FAILURE);
+	int total_files=0;
+    while(dir)	//read directory
+    {	
+		if ((de = readdir(dir)) != NULL)
+		{
+			if (de->d_type == DT_REG)	//only get regular files
+			{
+				const char *ext = strrchr(de->d_name,'.');
+				if(strcmp(ext, ".csv") == 0)
+				{
+					file_names[total_files] = malloc(strlen(de->d_name)+1);
+					strcpy(file_names[total_files],de->d_name);
+					total_files++;
+				}
+			}
+		}
+		else
+		{
+			closedir(dir);
+			return (total_files-1);
+		}
+	} 
+}
+
+int main(void) 
+{
+	unsigned int active = 1;
+	struct Shop shop = createAndStockShop();
+	char *all_csv_files[MAX_FILE_NAME_LENGTH]={""};
+	int total_csv_files = getAllFiles(all_csv_files);
+	while(active)
+	{
+		printf("Welcome to the shop\n");
+		//putchar('$');
+		//printf("%c\n", 8352);
+    	printf("---------------------------------------------------\n");
+    	printShop(shop);
+		printf("---------------------------------------------------\n");
+		printf("1) for Live Mode\n");
+		for (size_t i = 0; i <= total_csv_files; i++)
+			printf("%d) %s%s\n",i+2,DIRECTORY_PATH,all_csv_files[i]);
+		printf("\n");
+    	printf("0) Exit\n");
+    	printf("\n");
+    	printf("Choose your customer file or Live Mode: e.g type 1 for live mode, 2+ for file 3\n\n");
+    	printf("\n");
+		//Take user input
+		unsigned int answer;
+		char temp_buf[4] = {0};
+		printf("Option: ");
+		scanf("%s",temp_buf);
+		
+		if (isdigit(temp_buf[0]))
+		{
+			answer = atoi(temp_buf);
+			printf("\n");
+			char customer_csv_path[MAX_FILE_NAME_LENGTH]="";
+			struct Customer c;
+			unsigned int custom_active = 1;
+			double custom_budget = 0.0;
+			struct temp_active_products active_products_list={.index=0};
+			//Take actions according to the user input
+			switch (answer)
+			{
+				case 1:
+					printf("---------------------------------------------------\n");
+					printf("Live mode\n");
+					printf("Type your budget : ");
+					scanf("%lf",&custom_budget);
+					while (custom_active == 1)
+					{
+						char custom_product[MAX_FILE_NAME_LENGTH]="";
+						printf("Enter a product name you would like? Eg: Coke Can, Bread, Spaghetti, Tomato Sauce, Big Bags : ");
+						//scanf("%s",custom_product);
+						//fgets(custom_product,50,stdin);
+						scanf(" %[^\n]s",custom_product);
+						if (findProduct(custom_product,&shop)!=1)
+						{
+							printf("This product : %s, is not in stock\n",custom_product);
+						}
+						else
+						{
+							printf("Entered Product is %s \n",custom_product);
+							int custom_count=0;
+							double custom_sub_total = 0.0;
+							int available_qty = findProductQuantity(custom_product,&shop);
+							printf("How many do you want? : ");
+							scanf("%d",&custom_count);
+							if (available_qty >= custom_count)
+							{
+								custom_sub_total = (findProductPrice(custom_product,&shop) * custom_count);
+								printf("The cost to you will be %.2f\n",custom_sub_total);
+								struct temp_buying_data buying_data = {.product_name=custom_product,
+																.qty=custom_count,
+																.sub_total=custom_sub_total};
+								active_products_list.products[active_products_list.index] = buying_data;
+								active_products_list.index = (active_products_list.index)+1;
+							}
+							else
+							{
+								printf("\n");
+								printf("FAIL ! \n");
+								printf("Not enough %s in stock\n",custom_product);
+								printf("%d %s in stock\n",available_qty,custom_product);
+								printf("You want %d of %s\n",custom_count, custom_product);
+								printf("Please revise order and try again!\n");
+							}
+						}
+						char close_tag[4] = "Y";
+						printf("Would you like another product? Y/N ");
+						scanf("%s",close_tag);
+						if ((strcmp(close_tag,"N")==0) || (strcmp(close_tag,"n")==0))
+						{
+							custom_active = 0;
+						}
+						
+						//if ((close_tag == 'N') || (close_tag == 'n'))
+						//	custom_active = 0;
+					}
+					printf("Summary\n");
+					if (active_products_list.index > 0)
+					{
+						double total = 0;
+						for(unsigned int m = 0; m < active_products_list.index; m++)
+							total = total + active_products_list.products[m].sub_total;
+						if (total > custom_budget)
+						{
+							printf("FAIL! \n");
+							printf("Your budget is ...\n");
+							printf("The total cost of all items is ...! %.2f\n",total);
+							printf("You do not have enough money\n");
+							printf("Total of 0 will be deducted from your budget\n");
+							printf("Your budget is %.2f\n",custom_budget);
+							printf("Total of 0 added to shop\n");
+							printf("Shop has %.2f in cash\n",shop.cash);
+						}
+						else
+						{
+							printf("SUCCESS! \n");
+							printf("Your budget is %.2f\n",custom_budget);
+							printf("You have enough money\n");
+							printf("Total of %.2f will be deducted from your budget\n",total);
+							printf("Total of %.2f will be added to shop\n",total);
+							//updating the stock
+							for(unsigned int k = 0; k < shop.index; k++)
+							{
+								for(unsigned int m = 0; m < active_products_list.index; m++)
+									if (strcmp(shop.stock[k].product.name, active_products_list.products[m].product_name)==0)
+										shop.stock[k].quantity = (shop.stock[k].quantity - active_products_list.products[m].qty);
+							}
+							double shop_total = 0.0;
+							shop_total = shop.cash + total;
+							shop.cash = shop_total;
+							custom_budget = custom_budget - total;
+							//printf(shop.stock[0].product.name, shop.stock[0].quantity);
+							printf("Shop has %.2f in cash\n",shop_total);
+						}	
+					}
+					else
+					{
+						printf("Something went wrong\n");
+					}
+					printf("---------------------------------------------------\n");
+					break;
+				case 2:
+					printf("---------------------------------------------------\n");
+					strcat(customer_csv_path,DIRECTORY_PATH);
+					strcat(customer_csv_path,all_csv_files[answer-2]);
+					printf("you selected %s as a current customer data\n",customer_csv_path);
+					printf("\n");
+					c = readCustomer(customer_csv_path,&shop);
+					printCustomer(c,&shop);
+					printf("\n");
+					printf("---------------------------------------------------\n");
+					break;
+				case 3:
+					printf("---------------------------------------------------\n");
+					strcat(customer_csv_path,DIRECTORY_PATH);
+					strcat(customer_csv_path,all_csv_files[answer-2]);
+					printf("you selected %s as a current customer data\n",customer_csv_path);
+					printf("\n");
+					c = readCustomer(customer_csv_path,&shop);
+					printCustomer(c,&shop);
+					printf("\n");
+					printf("---------------------------------------------------\n");
+					break;
+				case 4:
+					printf("---------------------------------------------------\n");
+					strcat(customer_csv_path,DIRECTORY_PATH);
+					strcat(customer_csv_path,all_csv_files[answer-2]);
+					printf("you selected %s as a current customer data\n",customer_csv_path);
+					printf("\n");
+					c = readCustomer(customer_csv_path,&shop);
+					printCustomer(c,&shop);
+					printf("\n");
+					printf("---------------------------------------------------\n");
+					break;
+				case 0:
+					printf("Your option is : 1) for live mode\n");
+					active = 0;
+					break;
+				default:
+					printf("\n");
+					printf("0) Exit\n");
+					printf("\n");
+					break;
+			} 
+		}
+		else
+		{
+			printf("NameError: Please Use Numbers Only\n");
+		}
+		
+	}
+    return 0;
+}
